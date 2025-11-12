@@ -4,7 +4,12 @@
 
 using namespace std;
 
+int add(int a, int b){
+    return a + b;
+}
+
 int main(){
+    try
     {
         ThreadPool pool;
         for (int i = 0; i < 10; ++i) {
@@ -13,7 +18,14 @@ int main(){
                 cout << format("Task {} is done\n", i) << endl;
             });
         }
+        auto future = pool.enqueue(add, 3, 5);
+        cout << format("3 + 5 = {}\n", future.get()) << endl;
     }
+    catch (const std::exception& e)
+    {
+        cerr << "Exception: " << e.what() << endl;
+    }
+    
     
     return 0;
 }

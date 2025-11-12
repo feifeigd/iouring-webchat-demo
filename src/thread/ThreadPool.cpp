@@ -1,4 +1,5 @@
 #include "ThreadPool.h"
+#include <cassert>
 
 ThreadPool::ThreadPool(size_t numThreads)  {
     for (size_t i = 0; i < numThreads; ++i) {
@@ -11,29 +12,25 @@ ThreadPool::~ThreadPool() {
     condition.notify_all();
 }
 
-void ThreadPool::enqueue(Task task) {
-    {
-        std::lock_guard<std::mutex> lock(queueMutex);
-        tasks.push(std::move(task));
-    }
-    condition.notify_one();
-}
 
 void ThreadPool::workerThread() {
     while (true) {
-        Task task;
+        TaskPtr task;
         {
             std::unique_lock<std::mutex> lock(queueMutex);
-            condition.wait(lock, [this] { return stop.load() || !tasks.empty(); });
+            condition.wait(lock, [this] -> bool { return stop.load() || !tasks.empty(); });
             if (stop.load() && tasks.empty()) {
                 return;
             }
+            // task = tasks.front();
             task = std::move(tasks.front());
+            // assert(task);
             tasks.pop();
         }
-        
-        if(task){
-            task();
+
+        // if(task)
+        {
+            (*task)();
         }
     }
 }
