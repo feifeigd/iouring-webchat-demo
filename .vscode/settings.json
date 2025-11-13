@@ -58,6 +58,11 @@
         "streambuf": "cpp",
         "cinttypes": "cpp",
         "typeinfo": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "forward_list": "cpp",
+        "chrono": "cpp",
+        "csignal": "cpp",
+        "iomanip": "cpp",
+        "sstream": "cpp"
     }
 }

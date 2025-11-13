@@ -25,7 +25,7 @@ public:
             auto task = std::make_unique<Task>(std::forward<F>(f), std::forward<Args>(args)...);
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
-                if(stop){
+                if(stop_){
                     throw std::runtime_error("enqueue on stopped ThreadPool");
                 }
                 tasks.push(std::move(task));
@@ -38,7 +38,7 @@ public:
             auto resPtr = taskPtr->get_future();
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
-                if(stop){
+                if(stop_){
                     throw std::runtime_error("enqueue on stopped ThreadPool");
                 }
                 tasks.emplace(std::make_unique<Task>([taskPtr = std::move(taskPtr)]() {
@@ -49,11 +49,14 @@ public:
             return resPtr;
         }
     }
+
+    bool empty()const;
+    void stop();
 private:
     void workerThread();
     std::queue<TaskPtr> tasks; // 必须放在 workers 之前，保证析构时先停止线程再销毁任务队列
-    std::vector<std::jthread> workers;
-    std::mutex queueMutex;
+    mutable std::mutex queueMutex;
     std::condition_variable condition;
-    std::atomic<bool> stop;
+    std::atomic<bool> stop_;
+    std::vector<std::jthread> workers;
 };
