@@ -14,7 +14,7 @@ class ThreadPool {
     using TaskPtr = std::unique_ptr<Task>;
 public:
 
-    ThreadPool(size_t numThreads = std::thread::hardware_concurrency());
+    ThreadPool(uint32_t numThreads = std::thread::hardware_concurrency());
     ~ThreadPool();
 
     template<typename F, typename... Args>

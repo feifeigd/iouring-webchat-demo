@@ -6,10 +6,15 @@
 using namespace std;
 
 int main(){
+    
     try
     {
         Application app;
-        app.run();
+        if(auto rc = app.run(); EXIT_SUCCESS != rc)
+        {
+            cerr << "Application exited with code: " << rc << endl;
+            return rc;
+        }
     }
     catch (const std::exception& e)
     {

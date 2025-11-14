@@ -23,6 +23,7 @@ void Application::initialize(){
 void Application::shutdown(){
     cout << "Application is shutting down..." << endl;
     threadPool_.stop();
+    ioUringLoop_.stop();
     running_ = false;
 }
 
@@ -31,7 +32,7 @@ int add(int a, int b){
 }
 
 
-void Application::run(){
+int Application::run(){
     cout << "Application is running... "<< endl;
     initialize();
     
@@ -42,17 +43,36 @@ void Application::run(){
     //     });
     // }
 
-    // auto future = threadPool_.enqueue(add, 3, 5);
-    // cout << format("3 + 5 = {}\n", future.get()) << endl;
+    auto future = threadPool_.enqueue(add, 3, 5);
+    cout << format("3 + 5 = {}\n", future.get()) << endl;
     // 主线程等待2秒后发送信号（模拟Ctrl+C）
     // jthread signal_simulator([]() {
     //     this_thread::sleep_for(chrono::seconds(5));
     //     cout << "Simulating SIGINT signal..." << endl;
-    //     raise(SIGINT);
-    //     raise(SIGTERM);
+    //     SignalHandler::safe_raise(SIGINT);
+    //     // raise(SIGTERM);
     // });
 
-    while(running_){
-        this_thread::sleep_for(chrono::milliseconds(50));
+    if(!ioUringLoop_.start()){
+        cerr << "Failed to start IoUringLoop" << endl;
+        return EXIT_FAILURE;
     }
+
+    if(auto handle = ioUringLoop_.listen(8888, [](int handle){}); -1 == handle){
+        cerr << "监听端口失败" << endl;
+        return EXIT_FAILURE;
+    }
+
+    while(running_){
+        constexpr auto duration = chrono::milliseconds(50);
+        auto taskList = mainTasks_.getDoingList(duration);
+        if(!taskList->empty()){
+            for(auto& task: *taskList){
+                task();
+            }
+            taskList->clear();
+        }
+    }
+
+    return EXIT_SUCCESS;
 }

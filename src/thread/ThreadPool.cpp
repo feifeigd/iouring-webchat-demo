@@ -3,8 +3,8 @@
 #include <iostream>
 using namespace std;
 
-ThreadPool::ThreadPool(size_t numThreads)  {
-    for (size_t i = 0; i < numThreads; ++i) {
+ThreadPool::ThreadPool(uint32_t numThreads)  {
+    for (uint32_t i = 0; i < numThreads; ++i) {
         workers.emplace_back(&ThreadPool::workerThread, this);
     }
 }

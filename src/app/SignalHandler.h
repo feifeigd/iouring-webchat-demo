@@ -12,7 +12,7 @@ public:
     static void registerCleanupHandler(CleanupHandler handler){
         cleanupHandlers_.push_back(std::move(handler));
     }
-    
+    static int safe_raise(int sig);
 private:
     static void handleSignal(int signal);
 };

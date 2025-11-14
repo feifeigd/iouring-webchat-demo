@@ -19,6 +19,10 @@ void SignalHandler::setupSignalHandlers(){
     if(sigaction(SIGTERM, &sa, nullptr) == -1){
         throw std::system_error(errno, std::system_category(), "Failed to set SIGTERM handler");
     }
+
+    // 忽略某些可能干扰的信号
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGTRAP, SIG_IGN);
 }
 
 void SignalHandler::handleSignal(int signal){    
@@ -26,4 +30,9 @@ void SignalHandler::handleSignal(int signal){
     for(auto const& handler : cleanupHandlers_){
         handler();
     }
+}
+// 安全的信号触发函数
+int SignalHandler::safe_raise(int sig) {    
+    // 使用kill代替raise，更可控
+    return kill(getpid(), sig);
 }
