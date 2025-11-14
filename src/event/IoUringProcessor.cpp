@@ -1,5 +1,6 @@
 #include "IoUringProcessor.h"
 
+#include <cstring>
 #include <iostream>
 #include <memory>
 
@@ -36,7 +37,8 @@ void IoUringProcessor::runLoop(){
     struct io_uring_cqe* cqe;
     while(true){
         // 处理事件
-        if(auto rc = io_uring_wait_cqe(&ring_, &cqe)){
+        if(auto rc = io_uring_wait_cqe(&ring_, &cqe))
+        {
             if(-EINTR == rc){
                 #ifdef DEBUG
                 // 断点调试会触发 -4 返回值
@@ -47,19 +49,41 @@ void IoUringProcessor::runLoop(){
         }else{
             // 处理完成的事件
             cout << "Processor " << id_ << " received CQE with user data: " << cqe->user_data << endl;
+            bool success = cqe->res >= 0;
+            if(success){
+                int handle = (int)cqe->user_data;
+                if(0x80000000 & handle){
+                    auto& listener = listeners_.at(handle);
 
+                    submit_accept(handle, listener);
+                }else{
+                    auto& stream = streams_.at(handle);
+                }
+            }else{
+                cerr << "Async operation failed: " << strerror(-cqe->res) << endl;
+            }
         }
-        
+
         // 标记 CQE 已处理
-        if(cqe){
-            io_uring_cqe_seen(&ring_, cqe);
-        }
+        io_uring_cqe_seen(&ring_, cqe);
     }
 }
 
 void IoUringProcessor::createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient){
     listeners_.emplace(handle, Listener{fd, port, std::move(onNewClient)});
     auto& listener = listeners_.at(handle);
+    auto res = submit_accept(handle, listener);
+}
+
+int IoUringProcessor::submit_accept(int handle, Listener& listener){
+    auto sqe = io_uring_get_sqe(&ring_);
+    if(!sqe){
+        return -1;
+    }
+
+    io_uring_prep_accept(sqe, listener.fd(), (struct sockaddr*)&listener.client_addr, &listener.client_len, 0);
+    io_uring_sqe_set_data(sqe, (void*)(unsigned int)handle);
+    return io_uring_submit(&ring_);
 }
 
 void IoUringProcessor::removeListener(int handle){

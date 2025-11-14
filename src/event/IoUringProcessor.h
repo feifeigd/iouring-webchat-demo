@@ -24,6 +24,7 @@ public:
 
     bool init();
     void runLoop();
+    int submit_accept(int handle, Listener& listener);
 private:
     void createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient);
     void removeListener(int handle);
