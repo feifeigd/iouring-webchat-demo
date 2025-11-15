@@ -2,6 +2,7 @@
 #include "IoUringLoop.h"
 #include "IoUringProcessor.h"
 
+#include <cassert>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -52,24 +53,50 @@ void IoUringProcessor::runLoop(){
             // 处理完成的事件
             cout << "Processor " << id_ << " received CQE with user data: " << cqe->user_data << endl;
             bool success = cqe->res >= 0;
+            CommitData& commitData = *(CommitData*)cqe->user_data;
             if(success){
-                int handle = (int)cqe->user_data;
-                if(0x80000000 & handle){
-                    auto& listener = listeners_.at(handle);
+                switch (commitData.type)
+                {
+                case CommitType::ACCEPT:{
+                    auto& listener = *dynamic_cast<Listener*>(commitData.netItem);
                     loop_.createStream(cqe->res, listener.onNewClient_);
-                    submit_accept(handle, listener);
+                    submit_accept(listener);
+                }
+                break;
 
-                }else{
-                    auto& stream = streams_.at(handle);
-                    auto recv_bytes = cqe->res;
-                    if(recv_bytes > 0){
+                default: {
+                    auto& stream = *dynamic_cast<Stream*>(commitData.netItem);
+                    auto handle = stream.handle();
+                    auto bytes = cqe->res;
+                    switch (commitData.type)
+                    {
+                    case CommitType::READ:{
                         auto buff = stream.getReadBuff();
-                        buff[recv_bytes];
+                        buff[bytes] = 0;
                         cout << buff << endl;
-                        submit_read(handle, stream);
-                    }else{
-                        cout << "客户端已断开 handle= " << handle << endl;
+                        if(bytes > 0){
+                            // echo
+                            stream.write(buff, bytes);
+                            submit_write(handle, stream);
+                            submit_read(stream);
+                        }else{
+                            cout << "客户端已断开 handle= " << handle << endl;
+                        }
                     }
+                        
+                    break;
+
+                    case CommitType::WRITE:
+                        cout << "发送完成: " << bytes << endl;
+                        stream.resetWriteBuff();
+                    break;
+                    default:
+                        assert(false);
+                    break;
+                    }
+                    break;
+                }
+                break;
                 }
             }else{
                 cerr << "Async operation failed: " << strerror(-cqe->res) << endl;
@@ -82,14 +109,14 @@ void IoUringProcessor::runLoop(){
 }
 
 
-int IoUringProcessor::submit_accept(int handle, Listener& listener){
+int IoUringProcessor::submit_accept(Listener& listener){
     auto sqe = io_uring_get_sqe(&ring_);
     if(!sqe){
         return -1;
     }
 
     io_uring_prep_accept(sqe, listener.fd(), (struct sockaddr*)&listener.client_addr, &listener.client_len, 0);
-    io_uring_sqe_set_data(sqe, (void*)(unsigned int)handle);
+    io_uring_sqe_set_data(sqe, &listener.commitData_);
     return io_uring_submit(&ring_);
 }
 
@@ -97,6 +124,7 @@ void IoUringProcessor::removeListener(int handle){
     auto it = listeners_.find(handle);
     if(listeners_.end() != it){
         it->second.pendingClose_ = true;
+        it->second.close();
     }
 }
 
@@ -106,21 +134,32 @@ void IoUringProcessor::removeStream(int handle){
 
 void IoUringProcessor::addListener(int handle, Listener&& listener){
     listeners_.emplace(handle, std::move(listener));
-    submit_accept(handle, listeners_.at(handle));
+    submit_accept(listeners_.at(handle));
 }
 
 void IoUringProcessor::addStream(int handle, Stream&& stream){
     streams_.emplace(handle, std::move(stream));
-    submit_read(handle, streams_.at(handle));
+    submit_read(streams_.at(handle));
 }
 
-int IoUringProcessor::submit_read(int handle, Stream& stream){
+int IoUringProcessor::submit_read(Stream& stream){
     auto sqe = io_uring_get_sqe(&ring_);
     if(!sqe){
         return -1;
     }
 
     io_uring_prep_read(sqe, stream.fd(), stream.getReadBuff(), stream.getReadBuffSize(), 0);
-    io_uring_sqe_set_data(sqe, (void*)(unsigned int)handle);
+    io_uring_sqe_set_data(sqe, &stream.getCommitDataRead());
+    return io_uring_submit(&ring_);
+}
+
+int IoUringProcessor::submit_write(int handle, Stream& stream){
+    auto sqe = io_uring_get_sqe(&ring_);
+    if(!sqe){
+        return -1;
+    }
+
+    io_uring_prep_write(sqe, stream.fd(), stream.getWriteBuff(), stream.getWriteSize(), 0);
+    io_uring_sqe_set_data(sqe, &stream.getCommitDataWrite());
     return io_uring_submit(&ring_);
 }

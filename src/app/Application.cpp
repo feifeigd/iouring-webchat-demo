@@ -9,6 +9,7 @@
 using namespace std;
 
 Application::Application()
+    : ioUringLoop_{*this}
 {
     SignalHandler::setupSignalHandlers();
     SignalHandler::registerCleanupHandler([this]() {
@@ -45,23 +46,31 @@ int Application::run(){
 
     auto future = threadPool_.enqueue(add, 3, 5);
     cout << format("3 + 5 = {}\n", future.get()) << endl;
-    // 主线程等待2秒后发送信号（模拟Ctrl+C）
-    // jthread signal_simulator([]() {
-    //     this_thread::sleep_for(chrono::seconds(5));
-    //     cout << "Simulating SIGINT signal..." << endl;
-    //     SignalHandler::safe_raise(SIGINT);
-    //     // raise(SIGTERM);
-    // });
 
     if(!ioUringLoop_.start()){
         cerr << "Failed to start IoUringLoop" << endl;
         return EXIT_FAILURE;
     }
+    auto handle = ioUringLoop_.listen(8888, [](int handle){
+        cout << "new stream: " << handle << endl;
+    });
 
-    if(auto handle = ioUringLoop_.listen(8888, [](int handle){}); -1 == handle){
+    if( -1 == handle){
         cerr << "监听端口失败" << endl;
         return EXIT_FAILURE;
     }
+    
+    // 主线程等待2秒后发送信号（模拟Ctrl+C）
+    jthread signal_simulator([&, handle]() {
+        this_thread::sleep_for(chrono::seconds(5));
+        cout << "Simulating SIGINT signal..." << endl;
+        // SignalHandler::safe_raise(SIGINT);
+        // raise(SIGTERM);
+        mainTasks_.enqueue([&, handle](){
+            // ioUringLoop_.close(handle);
+            return;
+        });
+    });
 
     while(running_){
         constexpr auto duration = chrono::milliseconds(50);

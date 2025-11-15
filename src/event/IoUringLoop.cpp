@@ -95,7 +95,7 @@ IoUringProcessor& IoUringLoop::getProcessor(int handle){
 
 void IoUringLoop::close(int handle){
     auto& processor = getProcessor(handle);
-    if(0x7fffffff & handle){
+    if(0x80000000 & handle){
         processor.removeListener(handle);
     }else{
         processor.removeStream(handle);
@@ -109,7 +109,7 @@ void IoUringLoop::createListener(int handle, int fd, uint16_t port, Listener::On
 void IoUringLoop::createStream(int fd, Listener::OnNewClient onNewClient){
     app_.push([&, fd, onNewClient = std::move(onNewClient)](){
         auto handle = generateHandle();
-        getProcessor(handle).addStream(handle, Stream{fd});
+        getProcessor(handle).addStream(handle, Stream{handle, fd});
         onNewClient(handle);
     });
 }

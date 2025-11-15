@@ -27,8 +27,9 @@ public:
 
     bool init();
     void runLoop();
-    int submit_accept(int handle, Listener& listener);
-    int submit_read(int handle, Stream& stream);
+    int submit_accept(Listener& listener);
+    int submit_read(Stream& stream);
+    int submit_write(int handle, Stream& stream);
 private:
     void addListener(int handle, Listener&& listener);
     void removeListener(int handle);
