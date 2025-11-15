@@ -8,7 +8,7 @@
 
 int IoUringLoop::nextHandle_;
 
-IoUringLoop::IoUringLoop(uint32_t numThreads) : numThreads_(numThreads) {
+IoUringLoop::IoUringLoop(Application& app, uint32_t numThreads) : app_{app}, numThreads_(numThreads) {
     if(numThreads_ <= 0) {
         numThreads_ = 1;
     }
@@ -18,7 +18,7 @@ IoUringLoop::IoUringLoop(uint32_t numThreads) : numThreads_(numThreads) {
     index_mask_ = numThreads_ - 1;
     processors_.reserve(numThreads);
     for(uint32_t id = 0; id < numThreads; ++id){
-        processors_.emplace_back(id);
+        processors_.emplace_back(*this, id);
     }
 }
 
@@ -84,7 +84,7 @@ int IoUringLoop::listen(uint16_t port, Listener::OnNewClient onNewClient){
     }
 
     auto handle = generateHandle() | 0x80000000;
-    getProcessor(handle).createListener(handle, fd, port, std::move(onNewClient));
+    createListener(handle, fd, port, std::move(onNewClient));
     return handle;
 }
 
@@ -100,4 +100,16 @@ void IoUringLoop::close(int handle){
     }else{
         processor.removeStream(handle);
     }
+}
+
+void IoUringLoop::createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient){
+    getProcessor(handle).addListener(handle, Listener{fd, port, std::move(onNewClient)});
+}
+
+void IoUringLoop::createStream(int fd, Listener::OnNewClient onNewClient){
+    app_.push([&, fd, onNewClient = std::move(onNewClient)](){
+        auto handle = generateHandle();
+        getProcessor(handle).addStream(handle, Stream{fd});
+        onNewClient(handle);
+    });
 }

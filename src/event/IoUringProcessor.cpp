@@ -1,3 +1,5 @@
+
+#include "IoUringLoop.h"
 #include "IoUringProcessor.h"
 
 #include <cstring>
@@ -6,7 +8,7 @@
 
 using namespace std;
 
-IoUringProcessor::IoUringProcessor(uint32_t id): id_{id}{
+IoUringProcessor::IoUringProcessor(IoUringLoop& loop, uint32_t id): loop_{loop}, id_{id}{
 
 }
 
@@ -15,7 +17,7 @@ IoUringProcessor::~IoUringProcessor(){
 }
 
 IoUringProcessor::IoUringProcessor(IoUringProcessor&& other)
-    : id_{other.id_}, ring_{other.ring_} {
+    : loop_{other.loop_}, id_{other.id_}, ring_{other.ring_} {
     other.id_ = -1;
     // 注意：io_uring 结构体的移动语义需要根据具体需求实现，这里只是一个简单的示例
     other.ring_ = {};
@@ -54,10 +56,20 @@ void IoUringProcessor::runLoop(){
                 int handle = (int)cqe->user_data;
                 if(0x80000000 & handle){
                     auto& listener = listeners_.at(handle);
-
+                    loop_.createStream(cqe->res, listener.onNewClient_);
                     submit_accept(handle, listener);
+
                 }else{
                     auto& stream = streams_.at(handle);
+                    auto recv_bytes = cqe->res;
+                    if(recv_bytes > 0){
+                        auto buff = stream.getReadBuff();
+                        buff[recv_bytes];
+                        cout << buff << endl;
+                        submit_read(handle, stream);
+                    }else{
+                        cout << "客户端已断开 handle= " << handle << endl;
+                    }
                 }
             }else{
                 cerr << "Async operation failed: " << strerror(-cqe->res) << endl;
@@ -69,11 +81,6 @@ void IoUringProcessor::runLoop(){
     }
 }
 
-void IoUringProcessor::createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient){
-    listeners_.emplace(handle, Listener{fd, port, std::move(onNewClient)});
-    auto& listener = listeners_.at(handle);
-    auto res = submit_accept(handle, listener);
-}
 
 int IoUringProcessor::submit_accept(int handle, Listener& listener){
     auto sqe = io_uring_get_sqe(&ring_);
@@ -95,4 +102,25 @@ void IoUringProcessor::removeListener(int handle){
 
 void IoUringProcessor::removeStream(int handle){
 
+}
+
+void IoUringProcessor::addListener(int handle, Listener&& listener){
+    listeners_.emplace(handle, std::move(listener));
+    submit_accept(handle, listeners_.at(handle));
+}
+
+void IoUringProcessor::addStream(int handle, Stream&& stream){
+    streams_.emplace(handle, std::move(stream));
+    submit_read(handle, streams_.at(handle));
+}
+
+int IoUringProcessor::submit_read(int handle, Stream& stream){
+    auto sqe = io_uring_get_sqe(&ring_);
+    if(!sqe){
+        return -1;
+    }
+
+    io_uring_prep_read(sqe, stream.fd(), stream.getReadBuff(), stream.getReadBuffSize(), 0);
+    io_uring_sqe_set_data(sqe, (void*)(unsigned int)handle);
+    return io_uring_submit(&ring_);
 }
