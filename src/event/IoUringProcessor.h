@@ -9,6 +9,9 @@
 
 class IoUringLoop;
 class IoUringProcessor {
+    enum WakeupType{
+        NEW_LISTENER,
+    };
     IoUringProcessor(const IoUringProcessor&) = delete;
     IoUringProcessor& operator=(const IoUringProcessor&) = delete;
     
@@ -20,8 +23,22 @@ class IoUringProcessor {
     int entries_{1024}; // [1, 4096] 而且必须是2的N次方
     std::unordered_map<int, Listener> listeners_;
     std::unordered_map<int, Stream> streams_;
-    int wakeup_fd_{-1}; // 用于唤醒线程
-    uint64_t wakeup_type_{};
+
+    union{
+        int pipe_fds_[2]; // 用于唤醒线程
+        struct{
+            int pipe_read_;
+            int pipe_write_;
+        };
+    };
+
+    struct WakeupData{
+        uint64_t type{};
+        uint64_t param{};
+    }wakeupData_;
+
+    std::mutex mutex_;
+    std::unordered_map<int, Listener> pending_listeners_;
 public:
     IoUringProcessor(IoUringLoop& loop, uint32_t id);
     ~IoUringProcessor();
@@ -33,7 +50,7 @@ public:
     int submit_accept(Listener& listener);
     int submit_read(Stream& stream);
     int submit_write(int handle, Stream& stream);
-    void wakeup_io_uring(void);
+    void wakeup_io_uring(WakeupType, uint64_t param = 0);
 private:
     void addListener(int handle, Listener&& listener);
     void removeListener(int handle);

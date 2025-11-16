@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <format>
 #include <iostream>
 #include <memory>
 
@@ -14,6 +15,12 @@ IoUringProcessor::IoUringProcessor(IoUringLoop& loop, uint32_t id): loop_{loop},
 }
 
 IoUringProcessor::~IoUringProcessor(){
+    close(pipe_write_);
+    pipe_write_ = -1;
+
+    close(pipe_read_);
+    pipe_read_ = -1;
+
     io_uring_queue_exit(&ring_);
 }
 
@@ -31,9 +38,17 @@ bool IoUringProcessor::init(){
         cerr << "Failed to initialize io_uring for processor " << id_ << endl;
         return {};
     }
-    wakeup_fd_ = eventfd(0, EFD_CLOEXEC| EFD_NONBLOCK);
-    if(wakeup_fd_ < 0){
-        perror("eventfd");
+
+    if(-1 == pipe(pipe_fds_)){
+        perror("pipe");
+        return {};
+    }
+    if(-1 == fcntl(pipe_write_, F_SETFL, O_NONBLOCK)){
+        perror("fcntl pipe_write_");
+        return {};
+    }
+    if(-1 ==fcntl(pipe_read_, F_SETFL, O_NONBLOCK)){
+        perror("fcntl pipe_read_");
         return {};
     }
 
@@ -64,7 +79,7 @@ void IoUringProcessor::runLoop(){
             
             if(-1 == cqe->user_data){
                 assert(success);
-                handle_wakeup_event();
+                handle_wakeup_event(); 
                 submit_wakeup_read(); 
             }else{
                 if(success){
@@ -108,8 +123,9 @@ void IoUringProcessor::removeStream(int handle){
 }
 
 void IoUringProcessor::addListener(int handle, Listener&& listener){
-    listeners_.emplace(handle, std::move(listener));
-    submit_accept(listeners_.at(handle));
+    std::lock_guard<std::mutex> lock{mutex_};
+    pending_listeners_.emplace(handle, std::move(listener));
+    wakeup_io_uring(NEW_LISTENER);
 }
 
 void IoUringProcessor::addStream(int handle, Stream&& stream){
@@ -146,31 +162,39 @@ void IoUringProcessor::submit_wakeup_read(){
         // TODO
         return;
     }
-    io_uring_prep_read(sqe, wakeup_fd_, &wakeup_type_, sizeof(wakeup_type_), 0);
+    
+    io_uring_prep_read(sqe, pipe_read_, &wakeupData_, sizeof(wakeupData_), 0);
     io_uring_sqe_set_data64(sqe, -1);
     io_uring_submit(&ring_);
 }
 
-void IoUringProcessor::wakeup_io_uring(){
-    uint64_t one = 1;
-    if(write(wakeup_fd_, &one, sizeof(one)) != sizeof(one)){
-        perror("write to eventfd");
+void IoUringProcessor::wakeup_io_uring(WakeupType wakeup_type, uint64_t param){
+    WakeupData wakeupData{
+        .type = wakeup_type,
+        .param = param,
+    };
+    constexpr auto size{sizeof(wakeupData)};
+    if(auto res = write(pipe_write_, &wakeupData, sizeof(wakeupData)); res != size){
+        auto msg = std::format("write to eventfd={}", pipe_write_);
+        perror(msg.c_str());
     }
-    // auto sqe = io_uring_get_sqe(&ring_);
-    // if(!sqe){
-    //     return ;
-    // }
-    
-    // io_uring_prep_nop(sqe);
-    // io_uring_sqe_set_data(sqe, 0);
-    // io_uring_submit(&ring_);
 }
 
 void IoUringProcessor::handle_wakeup_event(){
-    cout << "wakeup_type=" << wakeup_type_ << endl;
-    switch (wakeup_type_)
+    cout << "wakeup_type=" << wakeupData_.type << endl;
+    switch ((WakeupType)wakeupData_.type)
     {    
+    case NEW_LISTENER:{
+        std::lock_guard<std::mutex> lock{mutex_};
+        for(auto& [handle, listener]: pending_listeners_){
+            listeners_.emplace(handle, std::move(listener));
+            submit_accept(listeners_.at(handle));
+        }
+        pending_listeners_.clear();
+    }
+        break;
     default:
+        assert(false);
         break;
     }
 }
