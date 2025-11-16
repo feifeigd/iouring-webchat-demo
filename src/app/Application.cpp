@@ -55,7 +55,7 @@ int Application::run(){
         cout << "new stream: " << handle << endl;
         // 关闭客户端
         jthread signal_simulator([&, handle]() {
-            this_thread::sleep_for(chrono::seconds(5));
+            this_thread::sleep_for(chrono::seconds(50));
             cout << "Simulating SIGINT signal..." << endl;
             // SignalHandler::safe_raise(SIGINT);
             // raise(SIGTERM);

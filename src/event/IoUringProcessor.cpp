@@ -10,6 +10,40 @@
 
 using namespace std;
 
+typedef enum {
+    FD_STATUS_INVALID = 0,    // 无效或已关闭
+    FD_STATUS_VALID = 1,      // 有效且打开
+    FD_STATUS_ERROR = -1      // 检查过程中发生错误
+} fd_status_t;
+
+fd_status_t check_file_descriptor(int fd) {
+    if (fd < 0) {
+        return FD_STATUS_INVALID;
+    }
+    
+    // 保存原来的errno
+    int old_errno = errno;
+    errno = 0;
+    
+    // 方法1: 使用fcntl
+    int result = fcntl(fd, F_GETFD);
+    
+    if (result == -1) {
+        if (errno == EBADF) {
+            errno = old_errno; // 恢复errno
+            return FD_STATUS_INVALID;
+        }
+        // 其他错误，可能是权限问题等
+        int saved_errno = errno;
+        errno = old_errno; // 恢复原来的errno
+        errno = saved_errno; // 但保留检查错误
+        return FD_STATUS_ERROR;
+    }
+    
+    errno = old_errno; // 恢复原来的errno
+    return FD_STATUS_VALID;
+}
+
 IoUringProcessor::IoUringProcessor(IoUringLoop& loop, uint32_t id): loop_{loop}, id_{id}{
 
 }
@@ -304,9 +338,15 @@ void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
                 // echo
                 stream.write(buff, bytes);
                 submit_write(handle, stream);
-                submit_read(stream);
+                if(stream.closing()){
+                    subPendingAndCheckClose(stream);
+                }else{
+                    submit_read(stream);
+                }
             }else{
-                cout << "客户端已断开 handle= " << handle << endl;
+                auto status = check_file_descriptor(stream.fd());
+                cout << "READ: 客户端已断开 handle= " << handle << endl;
+                removeStream(handle);      
             }
         }
             
@@ -315,6 +355,17 @@ void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
         case CommitType::WRITE:
             cout << "发送完成: " << bytes << endl;
             stream.resetWriteBuff();
+            if(bytes > 0){
+                if(stream.closing()){
+                    subPendingAndCheckClose(stream);
+                }else{
+                    // submit_write(stream);
+                }
+            }else{
+                auto status = check_file_descriptor(stream.fd());
+                cout << "WRITE: 客户端已断开 handle= " << handle << endl;
+                removeStream(handle);   
+            }
         break;
         default:
             assert(false);
@@ -324,39 +375,6 @@ void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
     }
     break;
     }
-}
-typedef enum {
-    FD_STATUS_INVALID = 0,    // 无效或已关闭
-    FD_STATUS_VALID = 1,      // 有效且打开
-    FD_STATUS_ERROR = -1      // 检查过程中发生错误
-} fd_status_t;
-
-fd_status_t check_file_descriptor(int fd) {
-    if (fd < 0) {
-        return FD_STATUS_INVALID;
-    }
-    
-    // 保存原来的errno
-    int old_errno = errno;
-    errno = 0;
-    
-    // 方法1: 使用fcntl
-    int result = fcntl(fd, F_GETFD);
-    
-    if (result == -1) {
-        if (errno == EBADF) {
-            errno = old_errno; // 恢复errno
-            return FD_STATUS_INVALID;
-        }
-        // 其他错误，可能是权限问题等
-        int saved_errno = errno;
-        errno = old_errno; // 恢复原来的errno
-        errno = saved_errno; // 但保留检查错误
-        return FD_STATUS_ERROR;
-    }
-    
-    errno = old_errno; // 恢复原来的errno
-    return FD_STATUS_VALID;
 }
 
 bool IoUringProcessor::realRemoveItem(NetItem& netItem){
