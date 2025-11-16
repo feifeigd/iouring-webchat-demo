@@ -25,19 +25,26 @@ IoUringProcessor::IoUringProcessor(IoUringProcessor&& other)
 }
 
 bool IoUringProcessor::init(){
-    // struct io_uring_params params{};
-    // if(io_uring_queue_init_params(entries_, &ring_, &params) < 0)
-    if(io_uring_queue_init(entries_, &ring_, 0) < 0)
+    struct io_uring_params params{};
+    if(io_uring_queue_init_params(entries_, &ring_, &params) < 0)
     {
         cerr << "Failed to initialize io_uring for processor " << id_ << endl;
         return {};
     }
+    wakeup_fd_ = eventfd(0, EFD_CLOEXEC| EFD_NONBLOCK);
+    if(wakeup_fd_ < 0){
+        perror("eventfd");
+        return {};
+    }
+
     return true;
 }
 
+// 所有的提交，和完成都必须在这个线程处理
 void IoUringProcessor::runLoop(){
     // 这里实现 io_uring 事件循环的逻辑
     struct io_uring_cqe* cqe;
+    submit_wakeup_read(); 
     while(true){
         // 处理事件
         if(auto rc = io_uring_wait_cqe(&ring_, &cqe))
@@ -48,59 +55,26 @@ void IoUringProcessor::runLoop(){
                 continue;
                 #endif
             }
+            assert(!cqe);
             cerr << "Error waiting for CQE: " << rc << endl;
         }else{
             // 处理完成的事件
             cout << "Processor " << id_ << " received CQE with user data: " << cqe->user_data << endl;
             bool success = cqe->res >= 0;
-            CommitData& commitData = *(CommitData*)cqe->user_data;
-            if(success){
-                switch (commitData.type)
-                {
-                case CommitType::ACCEPT:{
-                    auto& listener = *dynamic_cast<Listener*>(commitData.netItem);
-                    loop_.createStream(cqe->res, listener.onNewClient_);
-                    submit_accept(listener);
-                }
-                break;
-
-                default: {
-                    auto& stream = *dynamic_cast<Stream*>(commitData.netItem);
-                    auto handle = stream.handle();
-                    auto bytes = cqe->res;
-                    switch (commitData.type)
-                    {
-                    case CommitType::READ:{
-                        auto buff = stream.getReadBuff();
-                        buff[bytes] = 0;
-                        cout << buff << endl;
-                        if(bytes > 0){
-                            // echo
-                            stream.write(buff, bytes);
-                            submit_write(handle, stream);
-                            submit_read(stream);
-                        }else{
-                            cout << "客户端已断开 handle= " << handle << endl;
-                        }
-                    }
-                        
-                    break;
-
-                    case CommitType::WRITE:
-                        cout << "发送完成: " << bytes << endl;
-                        stream.resetWriteBuff();
-                    break;
-                    default:
-                        assert(false);
-                    break;
-                    }
-                    break;
-                }
-                break;
-                }
+            
+            if(-1 == cqe->user_data){
+                assert(success);
+                handle_wakeup_event();
+                submit_wakeup_read(); 
             }else{
-                cerr << "Async operation failed: " << strerror(-cqe->res) << endl;
+                if(success){
+                    handle_io_completion(cqe);
+                }else{
+                    CommitData& commitData = *(CommitData*)cqe->user_data;
+                    cerr << "Async operation failed: " << strerror(-cqe->res) << ", type=" << (uint32_t)commitData.type << endl;
+                }
             }
+
         }
 
         // 标记 CQE 已处理
@@ -129,7 +103,8 @@ void IoUringProcessor::removeListener(int handle){
 }
 
 void IoUringProcessor::removeStream(int handle){
-
+    auto& stream = streams_.at(handle);
+    stream.close();
 }
 
 void IoUringProcessor::addListener(int handle, Listener&& listener){
@@ -162,4 +137,88 @@ int IoUringProcessor::submit_write(int handle, Stream& stream){
     io_uring_prep_write(sqe, stream.fd(), stream.getWriteBuff(), stream.getWriteSize(), 0);
     io_uring_sqe_set_data(sqe, &stream.getCommitDataWrite());
     return io_uring_submit(&ring_);
+}
+
+void IoUringProcessor::submit_wakeup_read(){
+    auto sqe = io_uring_get_sqe(&ring_);
+    if(!sqe){
+        cerr << "submit_wait_wakeup sqe is null" << endl;
+        // TODO
+        return;
+    }
+    io_uring_prep_read(sqe, wakeup_fd_, &wakeup_type_, sizeof(wakeup_type_), 0);
+    io_uring_sqe_set_data64(sqe, -1);
+    io_uring_submit(&ring_);
+}
+
+void IoUringProcessor::wakeup_io_uring(){
+    uint64_t one = 1;
+    if(write(wakeup_fd_, &one, sizeof(one)) != sizeof(one)){
+        perror("write to eventfd");
+    }
+    // auto sqe = io_uring_get_sqe(&ring_);
+    // if(!sqe){
+    //     return ;
+    // }
+    
+    // io_uring_prep_nop(sqe);
+    // io_uring_sqe_set_data(sqe, 0);
+    // io_uring_submit(&ring_);
+}
+
+void IoUringProcessor::handle_wakeup_event(){
+    cout << "wakeup_type=" << wakeup_type_ << endl;
+    switch (wakeup_type_)
+    {    
+    default:
+        break;
+    }
+}
+
+void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
+    CommitData& commitData = *(CommitData*)cqe->user_data;
+    
+    switch (commitData.type)
+    {
+    case CommitType::ACCEPT:{
+        auto& listener = *dynamic_cast<Listener*>(commitData.netItem);
+        loop_.createStream(cqe->res, listener.onNewClient_);
+        submit_accept(listener);
+    }
+    break;
+
+    default: {
+        auto& stream = *dynamic_cast<Stream*>(commitData.netItem);
+        auto handle = stream.handle();
+        auto bytes = cqe->res;
+        switch (commitData.type)
+        {
+        case CommitType::READ:{
+            auto buff = stream.getReadBuff();
+            buff[bytes] = 0;
+            cout << buff << endl;
+            if(bytes > 0){
+                // echo
+                stream.write(buff, bytes);
+                submit_write(handle, stream);
+                submit_read(stream);
+            }else{
+                cout << "客户端已断开 handle= " << handle << endl;
+            }
+        }
+            
+        break;
+
+        case CommitType::WRITE:
+            cout << "发送完成: " << bytes << endl;
+            stream.resetWriteBuff();
+        break;
+        default:
+            assert(false);
+        break;
+        }
+        break;
+    }
+    break;
+    }
 }
