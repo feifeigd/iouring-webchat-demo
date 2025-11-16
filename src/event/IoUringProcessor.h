@@ -11,6 +11,7 @@ class IoUringLoop;
 class IoUringProcessor {
     enum WakeupType{
         NEW_LISTENER,
+        CLOSE_ITEM,
     };
     IoUringProcessor(const IoUringProcessor&) = delete;
     IoUringProcessor& operator=(const IoUringProcessor&) = delete;
@@ -39,6 +40,11 @@ class IoUringProcessor {
 
     std::mutex mutex_;
     std::unordered_map<int, Listener> pending_listeners_;
+    bool closing_{};
+    int pending_sqes_{0};
+    
+    CommitData commitDataCancel_{CommitType::CANCEL, nullptr, {}};
+    CommitData commitDataClose_{CommitType::CLOSE, nullptr, {}};
 public:
     IoUringProcessor(IoUringLoop& loop, uint32_t id);
     ~IoUringProcessor();
@@ -51,6 +57,9 @@ public:
     int submit_read(Stream& stream);
     int submit_write(int handle, Stream& stream);
     void wakeup_io_uring(WakeupType, uint64_t param = 0);
+    int submitCancelAndClose(NetItem& netItem);
+    int TracingAndCommit(NetItem& netItem, int advanceCount = 1);
+    void subPendingAndCheckClose(NetItem& netItem);
 private:
     void addListener(int handle, Listener&& listener);
     void removeListener(int handle);
@@ -62,4 +71,5 @@ private:
     void handle_wakeup_event();
 
     void handle_io_completion(struct io_uring_cqe* cqe);
+    bool realRemoveItem(NetItem& netItem);
 };

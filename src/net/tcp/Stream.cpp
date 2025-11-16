@@ -3,15 +3,13 @@
 #include <algorithm>
 #include <unistd.h>
 
-Stream::Stream(int handle, int fd): NetItem{fd}, handle_{handle}{
+Stream::Stream(int handle, int fd): NetItem{fd, handle}{
 
 }
 
 Stream::Stream(Stream&& other)
     : NetItem{std::move(other)}
-    , handle_{other.handle_}
 {
-    other.handle_ = -1;
 }
 
 Stream::~Stream(){

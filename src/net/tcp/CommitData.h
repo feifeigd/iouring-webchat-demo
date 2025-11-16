@@ -5,6 +5,9 @@ enum class CommitType {
     ACCEPT,
     READ,
     WRITE,
+
+    CANCEL,
+    CLOSE,
 };
 
 struct Buffer{

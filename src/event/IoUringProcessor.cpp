@@ -60,7 +60,7 @@ void IoUringProcessor::runLoop(){
     // 这里实现 io_uring 事件循环的逻辑
     struct io_uring_cqe* cqe;
     submit_wakeup_read(); 
-    while(true){
+    while(!(pending_sqes_ <= 0 && closing_)){
         // 处理事件
         if(auto rc = io_uring_wait_cqe(&ring_, &cqe))
         {
@@ -68,7 +68,7 @@ void IoUringProcessor::runLoop(){
                 #ifdef DEBUG
                 // 断点调试会触发 -4 返回值
                 continue;
-                #endif
+                #endif  
             }
             assert(!cqe);
             cerr << "Error waiting for CQE: " << rc << endl;
@@ -86,7 +86,12 @@ void IoUringProcessor::runLoop(){
                     handle_io_completion(cqe);
                 }else{
                     CommitData& commitData = *(CommitData*)cqe->user_data;
-                    cerr << "Async operation failed: " << strerror(-cqe->res) << ", type=" << (uint32_t)commitData.type << endl;
+                    if(-ECANCELED == cqe->res){   // 被取消了
+                        cout << "被取消: handle=" << commitData.netItem->handle() << ", type=" << (uint32_t)commitData.type << endl;
+                        subPendingAndCheckClose(*commitData.netItem);
+                    }else{
+                        cerr << "Async operation failed: " << strerror(-cqe->res) << ", type=" << (uint32_t)commitData.type << endl;
+                    }
                 }
             }
 
@@ -95,6 +100,8 @@ void IoUringProcessor::runLoop(){
         // 标记 CQE 已处理
         io_uring_cqe_seen(&ring_, cqe);
     }
+    cout << "IoUringProcessor::runLoop 结束: " << id_ << endl;
+    return;
 }
 
 
@@ -109,17 +116,38 @@ int IoUringProcessor::submit_accept(Listener& listener){
     return io_uring_submit(&ring_);
 }
 
-void IoUringProcessor::removeListener(int handle){
-    auto it = listeners_.find(handle);
-    if(listeners_.end() != it){
-        it->second.pendingClose_ = true;
-        it->second.close();
+int IoUringProcessor::submitCancelAndClose(NetItem& netItem){
+    auto sqe = io_uring_get_sqe(&ring_);
+    if(!sqe){
+        return -1;
     }
+    io_uring_prep_cancel_fd(sqe, netItem.fd(), 0);
+    commitDataCancel_.netItem = &netItem;
+    io_uring_sqe_set_data(sqe, &commitDataCancel_);
+    
+    sqe = io_uring_get_sqe(&ring_);
+    if(!sqe){
+        return -1;
+    }
+    io_uring_prep_close(sqe, netItem.fd());
+    commitDataClose_.netItem = &netItem;
+    io_uring_sqe_set_data(sqe, &commitDataClose_);    
+
+    return TracingAndCommit(netItem, 2);
+}
+
+int IoUringProcessor::TracingAndCommit(NetItem& netItem, int advanceCount){
+    pending_sqes_ += advanceCount;
+    netItem.add_pending_count(advanceCount);
+    return io_uring_submit(&ring_);
+}
+
+void IoUringProcessor::removeListener(int handle){
+    wakeup_io_uring(CLOSE_ITEM, handle);
 }
 
 void IoUringProcessor::removeStream(int handle){
-    auto& stream = streams_.at(handle);
-    stream.close();
+    wakeup_io_uring(CLOSE_ITEM, handle);
 }
 
 void IoUringProcessor::addListener(int handle, Listener&& listener){
@@ -186,16 +214,43 @@ void IoUringProcessor::handle_wakeup_event(){
     {    
     case NEW_LISTENER:{
         std::lock_guard<std::mutex> lock{mutex_};
-        for(auto& [handle, listener]: pending_listeners_){
-            listeners_.emplace(handle, std::move(listener));
-            submit_accept(listeners_.at(handle));
+        for(auto& [handle, temp_listener]: pending_listeners_){
+            listeners_.emplace(handle, std::move(temp_listener));
+            auto& listener = listeners_.at(handle);
+            submit_accept(listener);
+            TracingAndCommit(listener);
         }
         pending_listeners_.clear();
+    }
+        break;
+    case CLOSE_ITEM:
+    {
+        int handle = (int)wakeupData_.param;
+        if(0x80000000 & handle){                
+            if(auto it = listeners_.find(handle); listeners_.end() != it){
+                auto& listener = it->second;
+                listener.setClosing(true);
+                submitCancelAndClose(listener);
+            }
+        }else{              
+            if(auto it = streams_.find(handle); streams_.end() != it){
+                auto& stream = it->second;
+                stream.setClosing(true);
+                submitCancelAndClose(stream);
+            }
+        }
     }
         break;
     default:
         assert(false);
         break;
+    }
+}
+
+void IoUringProcessor::subPendingAndCheckClose(NetItem& netItem){
+    --pending_sqes_;
+    if(netItem.sub_pending_count() <= 0 && netItem.closing()){
+        realRemoveItem(netItem);
     }
 }
 
@@ -207,7 +262,17 @@ void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
     case CommitType::ACCEPT:{
         auto& listener = *dynamic_cast<Listener*>(commitData.netItem);
         loop_.createStream(cqe->res, listener.onNewClient_);
-        submit_accept(listener);
+        if(listener.closing()){
+            subPendingAndCheckClose(listener);
+        }else{
+            submit_accept(listener);
+        }
+    }
+    break;
+
+    case CommitType::CANCEL:    
+    case CommitType::CLOSE:{
+        subPendingAndCheckClose(*commitData.netItem);
     }
     break;
 
@@ -245,4 +310,52 @@ void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
     }
     break;
     }
+}
+typedef enum {
+    FD_STATUS_INVALID = 0,    // 无效或已关闭
+    FD_STATUS_VALID = 1,      // 有效且打开
+    FD_STATUS_ERROR = -1      // 检查过程中发生错误
+} fd_status_t;
+
+fd_status_t check_file_descriptor(int fd) {
+    if (fd < 0) {
+        return FD_STATUS_INVALID;
+    }
+    
+    // 保存原来的errno
+    int old_errno = errno;
+    errno = 0;
+    
+    // 方法1: 使用fcntl
+    int result = fcntl(fd, F_GETFD);
+    
+    if (result == -1) {
+        if (errno == EBADF) {
+            errno = old_errno; // 恢复errno
+            return FD_STATUS_INVALID;
+        }
+        // 其他错误，可能是权限问题等
+        int saved_errno = errno;
+        errno = old_errno; // 恢复原来的errno
+        errno = saved_errno; // 但保留检查错误
+        return FD_STATUS_ERROR;
+    }
+    
+    errno = old_errno; // 恢复原来的errno
+    return FD_STATUS_VALID;
+}
+
+bool IoUringProcessor::realRemoveItem(NetItem& netItem){
+    size_t removeCount{};
+    auto fd = netItem.fd();
+    auto status = check_file_descriptor(fd);
+    assert(FD_STATUS_INVALID == status);
+    auto handle = netItem.handle();
+    if(0x80000000 & handle){
+        removeCount = listeners_.erase(handle);
+    }else{
+        removeCount = streams_.erase(handle);
+    }
+
+    return 1 == removeCount;
 }

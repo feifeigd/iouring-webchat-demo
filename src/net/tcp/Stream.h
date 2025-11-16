@@ -10,7 +10,6 @@
 class Stream : public NetItem{
     Stream(const Stream&) = delete;
     Stream& operator=(const Stream&) = delete;
-    int handle_{-1};
     
     CommitData commitDataRead_{CommitType::READ, this, {}};
     CommitData commitDataWrite_{CommitType::WRITE, this, {}};
@@ -22,10 +21,6 @@ public:
     Stream(int handle, int fd);
     Stream(Stream&& other);
     ~Stream();
-
-    int handle()const{
-        return handle_;
-    }
 
     char* getReadBuff(){
         return read_buf_;

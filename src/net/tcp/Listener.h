@@ -21,20 +21,16 @@ private:
     CommitData commitData_{CommitType::ACCEPT, this, {}};
   
     uint16_t port_{0};
-    bool pendingClose_{};
     
     OnNewClient onNewClient_;
     // 这两个参数由 accept 回写，要保证生命周期，如果同时投递多个accept，则需要多组参数
     struct sockaddr_in client_addr{};
     socklen_t client_len = sizeof(client_addr);
-    bool toCose_{};
 public:
 
-    Listener(int fd, uint16_t port, OnNewClient onNewClient);
+    Listener(int fd, int handle, uint16_t port, OnNewClient onNewClient);
     Listener(Listener&& other);
-    // virtual ~Listener();
-
-    void setToClose(){
-        toCose_ = true;
+    virtual ~Listener(){
+        return;
     }
 };

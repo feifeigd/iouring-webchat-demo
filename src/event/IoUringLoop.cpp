@@ -1,3 +1,4 @@
+#include "app/Application.h"
 #include "IoUringLoop.h"
 
 #include <sys/socket.h>
@@ -103,7 +104,7 @@ void IoUringLoop::close(int handle){
 }
 
 void IoUringLoop::createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient){
-    getProcessor(handle).addListener(handle, Listener{fd, port, std::move(onNewClient)});
+    getProcessor(handle).addListener(handle, Listener{fd, handle, port, std::move(onNewClient)});
 }
 
 void IoUringLoop::createStream(int fd, Listener::OnNewClient onNewClient){
