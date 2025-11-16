@@ -157,8 +157,9 @@ void IoUringProcessor::addListener(int handle, Listener&& listener){
 }
 
 void IoUringProcessor::addStream(int handle, Stream&& stream){
-    streams_.emplace(handle, std::move(stream));
-    submit_read(streams_.at(handle));
+    std::lock_guard<std::mutex> lock{mutex_};
+    pending_streams_.emplace(handle, std::move(stream));    
+    wakeup_io_uring(NEW_STREAM);
 }
 
 int IoUringProcessor::submit_read(Stream& stream){
@@ -223,6 +224,19 @@ void IoUringProcessor::handle_wakeup_event(){
         pending_listeners_.clear();
     }
         break;
+    case NEW_STREAM:{
+        std::lock_guard<std::mutex> lock{mutex_};
+        for(auto& [handle, temp_stream]: pending_streams_){
+            streams_.emplace(handle, std::move(temp_stream));
+            auto& stream = streams_.at(handle);
+            submit_read(stream);
+            TracingAndCommit(stream);
+        }
+        pending_streams_.clear();
+
+    }
+        break;
+         
     case CLOSE_ITEM:
     {
         int handle = (int)wakeupData_.param;

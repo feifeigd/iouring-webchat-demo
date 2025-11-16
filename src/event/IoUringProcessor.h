@@ -11,6 +11,8 @@ class IoUringLoop;
 class IoUringProcessor {
     enum WakeupType{
         NEW_LISTENER,
+        NEW_STREAM,
+
         CLOSE_ITEM,
     };
     IoUringProcessor(const IoUringProcessor&) = delete;
@@ -40,6 +42,7 @@ class IoUringProcessor {
 
     std::mutex mutex_;
     std::unordered_map<int, Listener> pending_listeners_;
+    std::unordered_map<int, Stream> pending_streams_;
     bool closing_{};
     int pending_sqes_{0};
     
