@@ -53,7 +53,7 @@ int Buffer::read(void* to_buff, int len){
         return -1;
     }
     auto data_begin = dataBegin();
-    std::copy(data_begin, data_begin + len, to_buff);
+    std::copy(data_begin, data_begin + len, (char*)to_buff);
     forward(len);
     return len;
 }

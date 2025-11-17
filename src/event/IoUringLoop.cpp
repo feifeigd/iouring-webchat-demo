@@ -54,7 +54,7 @@ void IoUringLoop::stop() {
     // 停止 io_uring 事件循环，清理资源
 }
 
-int IoUringLoop::listen(uint16_t port, Listener::OnNewClient onNewClient){
+int IoUringLoop::listen(uint16_t port, std::shared_ptr<Protocol> protocol, Listener::OnNewClient onNewClient){
     auto fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if(fd < 0){
         perror("socket");
@@ -85,7 +85,7 @@ int IoUringLoop::listen(uint16_t port, Listener::OnNewClient onNewClient){
     }
 
     auto handle = generateHandle() | 0x80000000;
-    createListener(handle, fd, port, std::move(onNewClient));
+    createListener(handle, fd, port, protocol, std::move(onNewClient));
     return handle;
 }
 
@@ -103,14 +103,14 @@ void IoUringLoop::close(int handle){
     }
 }
 
-void IoUringLoop::createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient){
-    getProcessor(handle).addListener(handle, Listener{fd, handle, port, std::move(onNewClient)});
+void IoUringLoop::createListener(int handle, int fd, uint16_t port, std::shared_ptr<Protocol> protocol, Listener::OnNewClient onNewClient){
+    getProcessor(handle).addListener(handle, Listener{fd, handle, port, protocol, std::move(onNewClient)});
 }
 
-void IoUringLoop::createStream(int fd, Listener::OnNewClient onNewClient){
+void IoUringLoop::createStream(int fd, std::shared_ptr<Protocol> protocol, Listener::OnNewClient onNewClient){
     app_.push([&, fd, onNewClient = std::move(onNewClient)](){
         auto handle = generateHandle();
-        getProcessor(handle).addStream(handle, Stream{handle, fd});
+        getProcessor(handle).addStream(handle, Stream{handle, fd, protocol});
         onNewClient(handle);
     });
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "net/Buffer.h"
 
 enum class CommitType {
     ACCEPT,
@@ -10,9 +11,6 @@ enum class CommitType {
     CLOSE,
 };
 
-struct Buffer{
-
-};
 
 class NetItem;
 struct CommitData {

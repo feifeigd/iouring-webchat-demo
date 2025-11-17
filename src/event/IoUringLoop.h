@@ -1,7 +1,7 @@
 #pragma once
 
 #include "IoUringProcessor.h"
-
+#include "net/protocol/Protocol.h"
 #include <functional>
 #include <thread>
 #include <vector>
@@ -28,10 +28,10 @@ public:
     bool start();
     void stop();
 
-    int listen(uint16_t port, Listener::OnNewClient onNewClient);
-    void createStream(int fd, Listener::OnNewClient onNewClient);
+    int listen(uint16_t port, std::shared_ptr<Protocol> protocol, Listener::OnNewClient onNewClient);
+    void createStream(int fd, std::shared_ptr<Protocol> protocol, Listener::OnNewClient onNewClient);
     void close(int handle);
 
 private:
-    void createListener(int handle, int fd, uint16_t port, Listener::OnNewClient onNewClient);
+    void createListener(int handle, int fd, uint16_t port, std::shared_ptr<Protocol> protocol, Listener::OnNewClient onNewClient);
 };

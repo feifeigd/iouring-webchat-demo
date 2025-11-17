@@ -2,7 +2,7 @@
 
 #include "CommitData.h"
 #include "NetItem.h"
-
+#include "net/protocol/Protocol.h"
 #include <netinet/in.h> // sockaddr_in
 
 #include <functional>
@@ -28,7 +28,7 @@ private:
     socklen_t client_len = sizeof(client_addr);
 public:
 
-    Listener(int fd, int handle, uint16_t port, OnNewClient onNewClient);
+    Listener(int fd, int handle, uint16_t port, std::shared_ptr<Protocol> protocol, OnNewClient onNewClient);
     Listener(Listener&& other);
     virtual ~Listener(){
         return;

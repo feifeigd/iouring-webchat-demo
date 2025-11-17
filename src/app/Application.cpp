@@ -1,6 +1,7 @@
 
 #include "Application.h"
 #include "SignalHandler.h"
+#include "net/protocol/websocket/WebsocketProtocol.h"
 
 // #include <csignal>
 #include <format>
@@ -51,7 +52,7 @@ int Application::run(){
         cerr << "Failed to start IoUringLoop" << endl;
         return EXIT_FAILURE;
     }
-    auto handle = ioUringLoop_.listen(8888, [&](int handle){
+    auto handle = ioUringLoop_.listen(8888, std::make_shared<WebsocketProtocol>(), [&](int handle){
         cout << "new stream: " << handle << endl;
         // 关闭客户端
         jthread signal_simulator([&, handle]() {

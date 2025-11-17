@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <unistd.h>
 
-Stream::Stream(int handle, int fd): NetItem{fd, handle}{
+Stream::Stream(int handle, int fd, std::shared_ptr<Protocol> protocol)
+    : NetItem{fd, handle, protocol}
+{
 
 }
 

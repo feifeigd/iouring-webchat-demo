@@ -309,7 +309,7 @@ void IoUringProcessor::handle_io_completion(struct io_uring_cqe* cqe){
     {
     case CommitType::ACCEPT:{
         auto& listener = *dynamic_cast<Listener*>(commitData.netItem);
-        loop_.createStream(cqe->res, listener.onNewClient_);
+        loop_.createStream(cqe->res, listener.protocol_->clone(), listener.onNewClient_);
         if(listener.closing()){
             subPendingAndCheckClose(listener);
         }else{

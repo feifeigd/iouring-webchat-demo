@@ -18,7 +18,7 @@ class Stream : public NetItem{
     int write_size_{};
 public:
 
-    Stream(int handle, int fd);
+    Stream(int handle, int fd, std::shared_ptr<Protocol> protocol);
     Stream(Stream&& other);
     ~Stream();
 

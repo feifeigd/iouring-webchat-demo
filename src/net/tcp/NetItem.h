@@ -1,5 +1,7 @@
 #pragma once
 
+#include "net/protocol/Protocol.h"
+
 class NetItem{
     NetItem(const NetItem&) = delete;
     NetItem& operator=(const NetItem&) = delete;
@@ -8,13 +10,20 @@ class NetItem{
     int handle_{-1};
     bool closing_{};
     int pending_count_{};
+protected:
+    std::shared_ptr<Protocol> protocol_;
 public:
-    NetItem(int fd, int handle): fd_{fd}, handle_{handle}{
+    NetItem(int fd, int handle, std::shared_ptr<Protocol> protocol)
+        : fd_{fd}, handle_{handle}
+        , protocol_{protocol}
+    {
 
     }
+
     NetItem(NetItem&& other)
         : fd_{other.fd_}, handle_{other.handle_}
         , closing_{other.closing_}, pending_count_{other.pending_count_}
+        , protocol_{other.protocol_}
     {
         other.fd_ = -1;
         other.handle_ = -1;
